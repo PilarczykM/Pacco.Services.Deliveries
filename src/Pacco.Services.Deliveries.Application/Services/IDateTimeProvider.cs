@@ -1,9 +1,8 @@
 using System;
 
-namespace Pacco.Services.Deliveries.Application.Services
+namespace Pacco.Services.Deliveries.Application.Services;
+
+public interface IDateTimeProvider
 {
-    public interface IDateTimeProvider
-    {
-        DateTime Now { get; }
-    }
+    DateTime Now { get; }
 }
