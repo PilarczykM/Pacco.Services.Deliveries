@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+
 using Convey;
 using Convey.CQRS.Commands;
 using Convey.CQRS.Events;
@@ -24,10 +25,13 @@ using Convey.Tracing.Jaeger.RabbitMQ;
 using Convey.WebApi;
 using Convey.WebApi.CQRS;
 using Convey.WebApi.Swagger;
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+
 using Newtonsoft.Json;
+
 using Pacco.Services.Deliveries.Application;
 using Pacco.Services.Deliveries.Application.Commands;
 using Pacco.Services.Deliveries.Application.Services;
@@ -40,92 +44,91 @@ using Pacco.Services.Deliveries.Infrastructure.Mongo.Documents;
 using Pacco.Services.Deliveries.Infrastructure.Mongo.Repositories;
 using Pacco.Services.Deliveries.Infrastructure.Services;
 
-namespace Pacco.Services.Deliveries.Infrastructure
+namespace Pacco.Services.Deliveries.Infrastructure;
+
+public static class Extensions
 {
-    public static class Extensions
+    public static IConveyBuilder AddInfrastructure(this IConveyBuilder builder)
     {
-        public static IConveyBuilder AddInfrastructure(this IConveyBuilder builder)
-        {
-            builder.Services.AddSingleton<IEventMapper, EventMapper>();
-            builder.Services.AddTransient<IMessageBroker, MessageBroker>();
-            builder.Services.AddTransient<IDeliveriesRepository, DeliveriesMongoRepository>();
-            builder.Services.AddSingleton<IDateTimeProvider, DateTimeProvider>();
-            builder.Services.AddTransient<IAppContextFactory, AppContextFactory>();
-            builder.Services.AddTransient(ctx => ctx.GetRequiredService<IAppContextFactory>().Create());
-            builder.Services.TryDecorate(typeof(ICommandHandler<>), typeof(OutboxCommandHandlerDecorator<>));
-            builder.Services.TryDecorate(typeof(IEventHandler<>), typeof(OutboxEventHandlerDecorator<>));
+        builder.Services.AddSingleton<IEventMapper, EventMapper>();
+        builder.Services.AddTransient<IMessageBroker, MessageBroker>();
+        builder.Services.AddTransient<IDeliveriesRepository, DeliveriesMongoRepository>();
+        builder.Services.AddSingleton<IDateTimeProvider, DateTimeProvider>();
+        builder.Services.AddTransient<IAppContextFactory, AppContextFactory>();
+        builder.Services.AddTransient(ctx => ctx.GetRequiredService<IAppContextFactory>().Create());
+        builder.Services.TryDecorate(typeof(ICommandHandler<>), typeof(OutboxCommandHandlerDecorator<>));
+        builder.Services.TryDecorate(typeof(IEventHandler<>), typeof(OutboxEventHandlerDecorator<>));
 
-            return builder
-                .AddErrorHandler<ExceptionToResponseMapper>()
-                .AddQueryHandlers()
-                .AddInMemoryQueryDispatcher()
-                .AddHttpClient()
-                .AddConsul()
-                .AddFabio()
-                .AddRabbitMq(plugins: p => p.AddJaegerRabbitMqPlugin())
-                .AddMessageOutbox(o => o.AddMongo())
-                .AddExceptionToMessageMapper<ExceptionToMessageMapper>()
-                .AddMongo()
-                .AddRedis()
-                .AddMetrics()
-                .AddJaeger()
-                .AddHandlersLogging()
-                .AddMongoRepository<DeliveryDocument, Guid>("deliveries")
-                .AddWebApiSwaggerDocs()
-                .AddSecurity();
+        return builder
+            .AddErrorHandler<ExceptionToResponseMapper>()
+            .AddQueryHandlers()
+            .AddInMemoryQueryDispatcher()
+            .AddHttpClient()
+            .AddConsul()
+            .AddFabio()
+            .AddRabbitMq(plugins: p => p.AddJaegerRabbitMqPlugin())
+            .AddMessageOutbox(o => o.AddMongo())
+            .AddExceptionToMessageMapper<ExceptionToMessageMapper>()
+            .AddMongo()
+            .AddRedis()
+            .AddMetrics()
+            .AddJaeger()
+            .AddHandlersLogging()
+            .AddMongoRepository<DeliveryDocument, Guid>("deliveries")
+            .AddWebApiSwaggerDocs()
+            .AddSecurity();
+    }
+
+    public static IApplicationBuilder UseInfrastructure(this IApplicationBuilder app)
+    {
+        app.UseErrorHandler()
+            .UseSwaggerDocs()
+            .UseJaeger()
+            .UseConvey()
+            .UsePublicContracts<ContractAttribute>()
+            .UseMetrics()
+            .UseRabbitMq()
+            .SubscribeCommand<StartDelivery>()
+            .SubscribeCommand<CompleteDelivery>()
+            .SubscribeCommand<FailDelivery>()
+            .SubscribeCommand<AddDeliveryRegistration>();
+
+        return app;
+    }
+
+    internal static CorrelationContext GetCorrelationContext(this IHttpContextAccessor accessor)
+        => accessor.HttpContext?.Request.Headers.TryGetValue("Correlation-Context", out var json) is true
+            ? JsonConvert.DeserializeObject<CorrelationContext>(json.FirstOrDefault())
+            : null;
+
+    internal static IDictionary<string, object> GetHeadersToForward(this IMessageProperties messageProperties)
+    {
+        const string sagaHeader = "Saga";
+        if (messageProperties?.Headers is null || !messageProperties.Headers.TryGetValue(sagaHeader, out var saga))
+        {
+            return null;
         }
 
-        public static IApplicationBuilder UseInfrastructure(this IApplicationBuilder app)
-        {
-            app.UseErrorHandler()
-                .UseSwaggerDocs()
-                .UseJaeger()
-                .UseConvey()
-                .UsePublicContracts<ContractAttribute>()
-                .UseMetrics()
-                .UseRabbitMq()
-                .SubscribeCommand<StartDelivery>()
-                .SubscribeCommand<CompleteDelivery>()
-                .SubscribeCommand<FailDelivery>()
-                .SubscribeCommand<AddDeliveryRegistration>();
-
-            return app;
-        }
-        
-        internal static CorrelationContext GetCorrelationContext(this IHttpContextAccessor accessor)
-            => accessor.HttpContext?.Request.Headers.TryGetValue("Correlation-Context", out var json) is true
-                ? JsonConvert.DeserializeObject<CorrelationContext>(json.FirstOrDefault())
-                : null;
-
-        internal static IDictionary<string, object> GetHeadersToForward(this IMessageProperties messageProperties)
-        {
-            const string sagaHeader = "Saga";
-            if (messageProperties?.Headers is null || !messageProperties.Headers.TryGetValue(sagaHeader, out var saga))
+        return saga is null
+            ? null
+            : new Dictionary<string, object>
             {
-                return null;
-            }
+                [sagaHeader] = saga
+            };
+    }
 
-            return saga is null
-                ? null
-                : new Dictionary<string, object>
-                {
-                    [sagaHeader] = saga
-                };
-        }
-
-        internal static string GetSpanContext(this IMessageProperties messageProperties, string header)
+    internal static string GetSpanContext(this IMessageProperties messageProperties, string header)
+    {
+        if (messageProperties is null)
         {
-            if (messageProperties is null)
-            {
-                return string.Empty;
-            }
-
-            if (messageProperties.Headers.TryGetValue(header, out var span) && span is byte[] spanBytes)
-            {
-                return Encoding.UTF8.GetString(spanBytes);
-            }
-
             return string.Empty;
         }
+
+        if (messageProperties.Headers.TryGetValue(header, out var span) && span is byte[] spanBytes)
+        {
+            return Encoding.UTF8.GetString(spanBytes);
+        }
+
+        return string.Empty;
     }
 }
