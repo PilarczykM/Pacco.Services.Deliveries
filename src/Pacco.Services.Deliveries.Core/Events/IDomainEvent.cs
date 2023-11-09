@@ -1,6 +1,5 @@
-namespace Pacco.Services.Deliveries.Core.Events
+namespace Pacco.Services.Deliveries.Core.Events;
+
+public interface IDomainEvent
 {
-    public interface IDomainEvent
-    {
-    }
 }

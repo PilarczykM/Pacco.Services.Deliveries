@@ -1,14 +1,13 @@
 using Pacco.Services.Deliveries.Core.Entities;
 
-namespace Pacco.Services.Deliveries.Core.Events
-{
-    public class DeliveryStateChanged : IDomainEvent
-    {
-        public Delivery Delivery { get; }
+namespace Pacco.Services.Deliveries.Core.Events;
 
-        public DeliveryStateChanged(Delivery delivery)
-        {
-            Delivery = delivery;
-        }
+public class DeliveryStateChanged : IDomainEvent
+{
+    public Delivery Delivery { get; }
+
+    public DeliveryStateChanged(Delivery delivery)
+    {
+        Delivery = delivery;
     }
 }
